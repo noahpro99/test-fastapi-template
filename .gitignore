@@ -1,5 +1,7 @@
-.vscode
+.vscode/settings.json
 .mypy_cache
 docker-stack.yml
 .env
 .venv
+
+**/__pycache__

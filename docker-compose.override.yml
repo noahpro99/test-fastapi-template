@@ -39,19 +39,20 @@ services:
   backend:
     ports:
       - "8888:8888"
+      - "5678:5678"
     volumes:
-      - ./backend/app:/app
+      - ./backend:/app
     environment:
-      - JUPYTER=jupyter lab --ip=0.0.0.0 --allow-root --NotebookApp.custom_display_url=http://127.0.0.1:8888
       - SERVER_HOST=http://${DOMAIN?Variable not set}
     build:
       context: ./backend
       dockerfile: backend.dockerfile
-      args:
-        INSTALL_DEV: ${INSTALL_DEV-true}
-        INSTALL_JUPYTER: ${INSTALL_JUPYTER-true}
-    # command: bash -c "while true; do sleep 1; done"  # Infinite loop to keep container live doing nothing
-    command: /start-reload.sh
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && python backend_pre_start.py && python initial_data.py && pip install debugpy -t /tmp && python /tmp/debugpy --wait-for-client --listen 0.0.0.0:5678 -m uvicorn main:app --host 0.0.0.0 --port 8888 --reload"
+      ]
     labels:
       - traefik.enable=true
       - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
@@ -60,28 +61,23 @@ services:
 
   celeryworker:
     volumes:
-      - ./backend/app:/app
+      - ./backend:/app
     environment:
       - RUN=celery worker -A app.worker -l info -Q main-queue -c 1
-      - JUPYTER=jupyter lab --ip=0.0.0.0 --allow-root --NotebookApp.custom_display_url=http://127.0.0.1:8888
       - SERVER_HOST=http://${DOMAIN?Variable not set}
     build:
       context: ./backend
       dockerfile: celeryworker.dockerfile
-      args:
-        INSTALL_DEV: ${INSTALL_DEV-true}
-        INSTALL_JUPYTER: ${INSTALL_JUPYTER-true}
-
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        FRONTEND_ENV: dev
-    labels:
-      - traefik.enable=true
-      - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
-      - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=PathPrefix(`/`)
-      - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=80
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     args:
+  #       FRONTEND_ENV: dev
+  #   labels:
+  #     - traefik.enable=true
+  #     - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
+  #     - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=PathPrefix(`/`)
+  #     - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=80
 
 networks:
   traefik-public:

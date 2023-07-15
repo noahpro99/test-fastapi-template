@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Backend Attatch",
+            "type": "python",
+            "request": "attach",
+            "port": 5678,
+            "host": "localhost",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/backend",
+                    "remoteRoot": "/app"
+                }
+            ],
+            "justMyCode": true
+        }
+    ]
+}
