@@ -5,3 +5,4 @@ docker-stack.yml
 .venv
 
 **/__pycache__
+celerybeat-schedule

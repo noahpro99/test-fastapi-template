@@ -1,4 +1,4 @@
-from typing import Any, List
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -9,7 +9,7 @@ from api import deps
 router = APIRouter()
 
 
-@router.get("/", response_model=List[schemas.Item])
+@router.get("", response_model=list[schemas.Item])
 def read_items(
     db: Session = Depends(deps.get_db),
     skip: int = 0,
@@ -27,8 +27,7 @@ def read_items(
         )
     return items
 
-
-@router.post("/", response_model=schemas.Item)
+@router.post("", response_model=schemas.Item)
 def create_item(
     *,
     db: Session = Depends(deps.get_db),

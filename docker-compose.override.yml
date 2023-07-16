@@ -53,6 +53,7 @@ services:
         "-c",
         "alembic upgrade head && python backend_pre_start.py && python initial_data.py && pip install debugpy -t /tmp && python /tmp/debugpy --wait-for-client --listen 0.0.0.0:5678 -m uvicorn main:app --host 0.0.0.0 --port 8888 --reload"
       ]
+    # command: tail -F anything
     labels:
       - traefik.enable=true
       - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
@@ -63,7 +64,7 @@ services:
     volumes:
       - ./backend:/app
     environment:
-      - RUN=celery worker -A app.worker -l info -Q main-queue -c 1
+      # - RUN=celery worker -A app.worker -l info -Q main-queue -c 1
       - SERVER_HOST=http://${DOMAIN?Variable not set}
     build:
       context: ./backend

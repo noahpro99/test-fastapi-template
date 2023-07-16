@@ -3,3 +3,5 @@
 from db.base_class import Base  # noqa
 from models.item import Item  # noqa
 from models.user import User  # noqa
+from models.project import Project  # noqa
+from models.user_project import UserProject  # noqa

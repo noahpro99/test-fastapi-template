@@ -1,14 +1,17 @@
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
-import uvicorn
-
 from api.router import api_router
 from core.config import settings
+from sqladmin import Admin
+from db.session import engine
+
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
-    openapi_url=f"{settings.API_PREFIX}/openapi.json"
+    openapi_url=f"{settings.API_PREFIX}/openapi.json",
 )
+admin = Admin(app, engine)
+
 
 # Set all CORS enabled origins
 if settings.BACKEND_CORS_ORIGINS:
