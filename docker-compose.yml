@@ -30,7 +30,7 @@ services:
       - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
       - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
       # LetsEncrypt Staging Server - uncomment when testing
-      - --certificatesResolvers.letsencrypt.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory
+      # - --certificatesResolvers.letsencrypt.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory
 
     labels:
       - traefik.enable=true
@@ -51,6 +51,7 @@ services:
     image: dpage/pgadmin4
     depends_on:
       - db
+      - traefik
     env_file: .env
     labels:
       - traefik.enable=true
@@ -62,6 +63,8 @@ services:
 
   flower:
     image: mher/flower
+    depends_on:
+      - traefik
     env_file: .env
     environment:
       - CELERY_BROKER_URL=amqp://guest@queue:5672//
@@ -71,11 +74,13 @@ services:
       - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.entrypoints=https
       - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls=true
       - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls.certresolver=${CERT_RESOLVER}
+      - traefik.http.services.${STACK_NAME?Variable not set}-flower.loadbalancer.server.port=5555
 
   backend:
     image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
     depends_on:
       - db
+      - traefik
     env_file: .env
     environment:
       - SERVER_NAME=${DOMAIN?Variable not set}
@@ -90,6 +95,7 @@ services:
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.entrypoints=https
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls.certresolver=${CERT_RESOLVER}
       - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.rule=Host(`api.${DOMAIN?Variable not set}`)
+      - traefik.http.services.${STACK_NAME?Variable not set}-backend.loadbalancer.server.port=3000
 
   celeryworker:
     image: '${DOCKER_IMAGE_CELERYWORKER?Variable not set}:${TAG-latest}'

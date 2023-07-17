@@ -1,49 +1,93 @@
-version: "3.3"
+volumes:
+  app-db-data:
+
+
 services:
 
-  proxy:
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
     ports:
-      - "80:80"
-      - "8090:8080"
+      - 80:80
+      - 443:443
+      - 8080:8080
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/letsencrypt
     command:
-      # Enable Docker in Traefik, so that it reads labels from Docker services
-      - --providers.docker
-      # Add a constraint to only use services with the label for this stack
-      # from the env var TRAEFIK_TAG
-      - --providers.docker.constraints=Label(`traefik.constraint-label-stack`, `${TRAEFIK_TAG?Variable not set}`)
-      # Do not expose all Docker services, only the ones explicitly exposed
+      - --api=true
+      - --entrypoints.http.address=:80
+      - --entrypoints.https.address=:443
+      - --entrypoints.dashboard.address=:8080
+      - --providers.docker=true
       - --providers.docker.exposedbydefault=false
-      # Disable Docker Swarm mode for local development
-      # - --providers.docker.swarmmode
-      # Enable the access log, with HTTP requests
-      - --accesslog
-      # Enable the Traefik log, for configurations and errors
-      - --log
-      # Enable the Dashboard and API
-      - --api
-      # Enable the Dashboard and API in insecure mode for local development
-      - --api.insecure=true
+      # Redirect all HTTP to HTTPS
+      # - --entrypoints.http.http.redirections.entryPoint.to=https
+      # - --entrypoints.http.http.redirections.entryPoint.scheme=https
+
+      # Enable Let's Encrypt
+      # - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      # - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      # - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # LetsEncrypt Staging Server - uncomment when testing
+      # - --certificatesResolvers.letsencrypt.acme.caServer=https://acme-staging-v02.api.letsencrypt.org/directory
+
     labels:
       - traefik.enable=true
-      - traefik.http.routers.${STACK_NAME?Variable not set}-traefik-public-http.rule=Host(`${DOMAIN?Variable not set}`)
-      - traefik.http.services.${STACK_NAME?Variable not set}-traefik-public.loadbalancer.server.port=80
+      - traefik.http.routers.traefik.rule=Host(`traefik.${DOMAIN}`)
+      - traefik.http.routers.traefik.entrypoints=https,dashboard,http
+      - traefik.http.routers.traefik.service=api@internal
+      - traefik.http.routers.traefik.tls.certresolver=${CERT_RESOLVER}
+
+  db:
+    image: postgres:12
+    volumes:
+      - app-db-data:/var/lib/postgresql/data/pgdata
+    env_file: .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
 
   pgadmin:
-    ports:
-      - "5050:5050"
+    image: dpage/pgadmin4
+    depends_on:
+      - db
+      - traefik
+    env_file: .env
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.rule=Host(`pgadmin.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.entrypoints=https,http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.tls.certresolver=${CERT_RESOLVER}
+      - traefik.http.services.${STACK_NAME?Variable not set}-pgadmin.loadbalancer.server.port=5050
 
   flower:
-    ports:
-      - "5555:5555"
+    image: mher/flower
+    depends_on:
+      - traefik
+    env_file: .env
+    environment:
+      - CELERY_BROKER_URL=amqp://guest@queue:5672//
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.rule=Host(`flower.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.entrypoints=https,http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls.certresolver=${CERT_RESOLVER}
+      - traefik.http.services.${STACK_NAME?Variable not set}-flower.loadbalancer.server.port=5555
 
   backend:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    depends_on:
+      - db
+      - traefik
+    env_file: .env
     ports:
-      - "8888:8888"
-      - "5678:5678"
-    volumes:
-      - ./backend:/app
+      - 5678:5678
     environment:
-      - SERVER_HOST=http://${DOMAIN?Variable not set}
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST}
     build:
       context: ./backend
       dockerfile: backend.dockerfile
@@ -51,36 +95,50 @@ services:
       [
         "sh",
         "-c",
-        "alembic upgrade head && python backend_pre_start.py && python initial_data.py && pip install debugpy -t /tmp && python /tmp/debugpy --wait-for-client --listen 0.0.0.0:5678 -m uvicorn main:app --host 0.0.0.0 --port 8888 --reload"
+        "alembic upgrade head && python backend_pre_start.py && python initial_data.py && pip install debugpy -t /tmp && python /tmp/debugpy --wait-for-client --listen 0.0.0.0:5678 -m uvicorn main:app --host 0.0.0.0 --port 3000 --reload"
       ]
-    # command: tail -F anything
     labels:
       - traefik.enable=true
-      - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
-      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/redoc`)
-      - traefik.http.services.${STACK_NAME?Variable not set}-backend.loadbalancer.server.port=80
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.entrypoints=https,http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.tls.certresolver=${CERT_RESOLVER}
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-https.rule=Host(`api.${DOMAIN?Variable not set}`)
+      - traefik.http.services.${STACK_NAME?Variable not set}-backend.loadbalancer.server.port=3000
 
   celeryworker:
-    volumes:
-      - ./backend:/app
+    image: '${DOCKER_IMAGE_CELERYWORKER?Variable not set}:${TAG-latest}'
+    depends_on:
+      - db
+      - queue
+    env_file: .env
     environment:
-      # - RUN=celery worker -A app.worker -l info -Q main-queue -c 1
-      - SERVER_HOST=http://${DOMAIN?Variable not set}
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST?Variable not set}
     build:
       context: ./backend
       dockerfile: celeryworker.dockerfile
-  # frontend:
-  #   build:
-  #     context: ./frontend
-  #     args:
-  #       FRONTEND_ENV: dev
-  #   labels:
-  #     - traefik.enable=true
-  #     - traefik.constraint-label-stack=${TRAEFIK_TAG?Variable not set}
-  #     - traefik.http.routers.${STACK_NAME?Variable not set}-frontend-http.rule=PathPrefix(`/`)
-  #     - traefik.http.services.${STACK_NAME?Variable not set}-frontend.loadbalancer.server.port=80
 
-networks:
-  traefik-public:
-    # For local dev, don't expect an external Traefik network
-    external: false
+  celery-beat:
+    image: '${DOCKER_IMAGE_CELERYBEAT?Variable not set}:${TAG-latest}'
+    depends_on:
+      - db
+      - queue
+    env_file: .env
+    environment:
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST?Variable not set}
+    command:
+      [
+        "sh",
+        "-c",
+        "python celeryworker_pre_start.py && celery -A worker beat"
+      ]
+    build:
+      context: ./backend
+      dockerfile: celeryworker.dockerfile
+
+  queue:
+    image: rabbitmq:3
