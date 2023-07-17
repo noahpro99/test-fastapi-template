@@ -13,5 +13,5 @@ CMD ["sh", "-c", \
     "alembic upgrade head \
     && python initial_data.py \
     && python backend_pre_start.py \
-    && uvicorn main:app --host 0.0.0.0 --port 8888 \
+    && uvicorn main:app --host 0.0.0.0 --port 80 \
     "]

@@ -1,0 +1,153 @@
+services:
+  
+  proxy:
+    image: traefik:v2.2
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - default
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./letsencrypt:/letsencrypt
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080"
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      # - --providers.docker.network=${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.web.address=:80
+      # - --certificatesresolvers.myresolver.acme.tlschallenge=true
+      # - --certificatesresolvers.myresolver.acme.email=noah.provenzano@fischerjordan.com
+      # - --certificatesresolvers.myresolver.acme.storage=/letsencrypt/acme.json
+      # Enable the access log, with HTTP requests
+      - --accesslog
+      # Enable the Traefik log, for configurations and errors
+      - --log
+      # Enable the Dashboard and API
+      - --api
+      - --api.dashboard=true
+      - --api.insecure=true
+      - --api.debug=true
+
+  db:
+    image: postgres:12
+    volumes:
+      - app-db-data:/var/lib/postgresql/data/pgdata
+    env_file:
+      - .env
+    environment:
+      - PGDATA=/var/lib/postgresql/data/pgdata
+
+  pgadmin:
+    image: dpage/pgadmin4
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - default
+    depends_on:
+      - db
+    env_file:
+      - .env
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - traefik.constraint-label=${TRAEFIK_PUBLIC_TAG?Variable not set}
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-http.rule=Host(`pgadmin.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-http.entrypoints=http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-http.middlewares=${STACK_NAME?Variable not set}-https-redirect
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.rule=Host(`pgadmin.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.entrypoints=https
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.tls=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-pgadmin-https.tls.certresolver=le
+      - traefik.http.services.${STACK_NAME?Variable not set}-pgadmin.loadbalancer.server.port=5050
+
+  queue:
+    image: rabbitmq:3
+    # Using the below image instead is required to enable the "Broker" tab in the flower UI:
+    # image: rabbitmq:3-management
+    #
+    # You also have to change the flower command
+  
+  flower:
+    image: mher/flower
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - default
+    env_file:
+      - .env
+    environment:
+      - CELERY_BROKER_URL=amqp://guest@queue:5672//
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - traefik.constraint-label=${TRAEFIK_PUBLIC_TAG?Variable not set}
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-http.rule=Host(`flower.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-http.entrypoints=http
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-http.middlewares=${STACK_NAME?Variable not set}-https-redirect
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.rule=Host(`flower.${DOMAIN?Variable not set}`)
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.entrypoints=https
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-flower-https.tls.certresolver=le
+      - traefik.http.services.${STACK_NAME?Variable not set}-flower.loadbalancer.server.port=5555
+  
+  backend:
+    image: '${DOCKER_IMAGE_BACKEND?Variable not set}:${TAG-latest}'
+    networks:
+      - ${TRAEFIK_PUBLIC_NETWORK?Variable not set}
+      - default
+    depends_on:
+      - db
+    env_file:
+      - .env
+    environment:
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST}
+    build:
+      context: ./backend
+      dockerfile: backend.dockerfile
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${STACK_NAME?Variable not set}-backend-http.rule=PathPrefix(`/api`) || PathPrefix(`/docs`) || PathPrefix(`/redoc`) || PathPrefix(`/admin`)
+  
+  celeryworker:
+    image: '${DOCKER_IMAGE_CELERYWORKER?Variable not set}:${TAG-latest}'
+    depends_on:
+      - db
+      - queue
+    env_file:
+      - .env
+    environment:
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST?Variable not set}
+    build:
+      context: ./backend
+      dockerfile: celeryworker.dockerfile
+
+  celery-beat:
+    image: '${DOCKER_IMAGE_CELERYBEAT?Variable not set}:${TAG-latest}'
+    depends_on:
+      - db
+      - queue
+    env_file:
+      - .env
+    environment:
+      - SERVER_NAME=${DOMAIN?Variable not set}
+      - SERVER_HOST=https://${DOMAIN?Variable not set}
+      # Allow explicit env var override for tests
+      - SMTP_HOST=${SMTP_HOST?Variable not set}
+    command: ["sh", "-c", "python celeryworker_pre_start.py && celery -A worker beat"]
+    build:
+      context: ./backend
+      dockerfile: celeryworker.dockerfile
+  
+volumes:
+  app-db-data:
+
+networks:
+  traefik-public:
+    external: false

@@ -6,3 +6,4 @@ docker-stack.yml
 
 **/__pycache__
 celerybeat-schedule
+letsencrypt/
